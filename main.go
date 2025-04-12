@@ -5,13 +5,24 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
 
-const maxServerCycle = 400
+const maxServerCycle = 200
 
 func main() {
+	// a := []int{1, 2, 3, 4}
+	// for i := 0; i < len(a); i++ {
+	// 	if a[i] == 4 {
+	// 		a = append(a[:i], a[i+1:]...)
+	// 		i--
+	// 		continue
+	// 	}
+	// 	fmt.Println(a, a[i])
+	// }
+	fmt.Println(6.496125-4.640089, 0.928018)
 	log.SetFlags(log.Lshortfile)
 	fmt.Println("start")
 	clk := &clock{
@@ -85,7 +96,7 @@ func (c *client) String() string {
 	if c.cliSimulation != nil {
 		return fmt.Sprintf("client: servercycle: %d, obj %s", c.serverCycle, c.cliSimulation)
 	}
-	return "client: no objs"
+	return fmt.Sprintf("client: servercycle: %d, obj: %v", c.serverCycle, nil)
 }
 
 func (c *client) Message(s serverMsg) {
@@ -205,6 +216,17 @@ type clientMsg struct {
 	serverCycle *int
 }
 
+func (c clientMsg) String() string {
+	sb := &strings.Builder{}
+	sb.WriteString(fmt.Sprintf("clientMsg(connect: %t, sc: %d, inputs: ", c.connect, *c.serverCycle))
+
+	for i, ip := range c.inputs {
+		sb.WriteString(fmt.Sprint(i, ip))
+	}
+	sb.WriteString(")")
+	return sb.String()
+}
+
 type clientInput struct {
 	sc       int
 	velocity *float64
@@ -212,9 +234,9 @@ type clientInput struct {
 
 func (c clientInput) String() string {
 	if c.velocity != nil {
-		return fmt.Sprintf("sc: %d, velocity: %v", c.sc, *c.velocity)
+		return fmt.Sprintf("clientInput(sc: %d, velocity: %f)", c.sc, *c.velocity)
 	}
-	return fmt.Sprintf("sc: %d, velocity: nil", c.sc)
+	return fmt.Sprintf("clientInput(sc: %d, velocity: nil)", c.sc)
 }
 
 type server struct {
@@ -317,114 +339,11 @@ type serverMsg struct {
 	state *obj
 }
 
-type clock struct {
-	time         time.Time
-	updatersLock *sync.Mutex
-	updaters     []updater
-}
-
-func (c *clock) subscribe(u updater) {
-	c.updatersLock.Lock()
-	c.updaters = append(c.updaters, u)
-	c.updatersLock.Unlock()
-}
-
-func (c *clock) unsubscribe(u updater) {
-	c.updatersLock.Lock()
-	c.updaters = append(c.updaters, u)
-	c.updatersLock.Unlock()
-}
-
-func (c *clock) Run() {
-	lastPrint := time.Time{}
-	for {
-		c.time = c.time.Add(time.Millisecond)
-		c.updatersLock.Lock()
-		for _, u := range c.updaters {
-			u.update(c.time)
-		}
-		c.updatersLock.Unlock()
-		if c.time.Sub(lastPrint) > time.Second/10 {
-			lastPrint = c.time
-			for _, u := range c.updaters {
-				fmt.Println(u)
-			}
-		}
+func (c serverMsg) String() string {
+	if c.state == nil {
+		return "nil"
 	}
-}
-
-type updater interface {
-	update(time.Time)
-}
-
-type obj struct {
-	velocity float64
-	pos      float64
-	cycle    int
-	clientID int
-}
-
-func (o obj) String() string {
-	return fmt.Sprintf("id: %d pos: %f velocity: %f", o.clientID, o.pos, o.velocity)
-}
-func (o *obj) update(sc int) {
-	o.pos += o.velocity
-	o.cycle = sc
-}
-
-func (o *obj) act(a clientInput) {
-	if a.velocity == nil {
-		return
-	}
-	o.velocity = *a.velocity
-}
-
-type network struct {
-	clk        *clock
-	client     *client
-	server     *server
-	serverMsgs []NetworkWrapper[serverMsg]
-	clientMsgs []NetworkWrapper[clientMsg]
-	rnd        *rand.Rand
-}
-
-func (n *network) SendToClient(m serverMsg) {
-
-	n.serverMsgs = append(n.serverMsgs, NetworkWrapper[serverMsg]{
-		msg:     m,
-		counter: n.rnd.Intn(5),
-	})
-}
-
-func (n *network) SendToServer(m clientMsg) {
-	n.clientMsgs = append(n.clientMsgs, NetworkWrapper[clientMsg]{
-		msg:     m,
-		counter: n.rnd.Intn(5),
-	})
-}
-
-func (n *network) update(time.Time) {
-	// for i, cm := range n.clientMsgs {
-	// 	// if cm.
-	// }
-
-}
-
-func (n network) String() string {
-	return fmt.Sprintf("network: ")
-}
-
-func (n *network) Setup() error {
-	n.clk.subscribe(n)
-	return nil
-}
-
-type NetworkWrapper[T any] struct {
-	msg     T
-	counter int
-}
-
-func (n *NetworkWrapper[any]) Decrement() bool {
-	n.counter--
-	return n.counter < 1
+	sb := &strings.Builder{}
+	sb.WriteString(fmt.Sprintf("serverMsg(state: %v)", c.state))
+	return sb.String()
 }
