@@ -82,3 +82,31 @@ c s cl
 2 0 1
 3 0
 3 1 1
+
+client delay which causes changes to arrive in the past on the server - 
+
+Implement wait on the client that equals .5 ping, reduce the inconsistency by half. lower the percived reaction of the user to their inputs.
+
+The client sends an action
+the client is ping aware - knows approx time to take the action - (about the time the server takes the action)
+The client receives the exact time the server took the action and is able to 
+
+94 server sends no position data
+90 client sends an action
+-----------------------
+98 server receives it
+94 client can perform the action
+-----------------------
+95 client receives 0 message that resets position.
+
+
+### user experience degrades
+client ignores its action
+server receives the actions and confirms when it received them
+the client acts on historic information and is behind the server.
+user experience degrades because the client waits for approval from the server before it performs an action
+best case half the time it takes for the response message to arrive.
+
+### 
+
+
