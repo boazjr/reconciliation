@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const maxServerCycle = 400
+
 func main() {
 	log.SetFlags(log.Lshortfile)
 	fmt.Println("start")
@@ -28,7 +30,7 @@ func main() {
 		clock:         clk,
 		serverMsgLock: &sync.Mutex{},
 		rnd:           rand.New(rand.NewSource(0)),
-		actions:       NewCircularArray[clientInputs](20),
+		actions:       NewCircularArray[clientInput](20),
 	}
 	c.Setup()
 
@@ -43,15 +45,32 @@ type client struct {
 	serverMsgLock  *sync.Mutex
 	serverMessages []serverMsg
 	clock          *clock
-	serverState    []obj
+	serverState    *obj
 	// cliSimulation
 	cliSimulation *obj
 	// actions - velocity and server cycle // circularArray
-	actions     *CircularArray[clientInputs]
+	actions     *CircularArray[clientInput]
 	lastUpdate  time.Time
 	serverCycle int
 	rnd         *rand.Rand
 	// userEvents
+}
+
+func (c *client) update(t time.Time) {
+	if t.Before(c.lastUpdate.Add(time.Second / 60)) {
+		return
+	}
+	c.lastUpdate = t
+	c.handleMessages()
+	c.reconcileState()
+	c.handleUserEvents()
+	c.sendUserEvents()
+	c.updateObjects()
+
+	if c.serverCycle == maxServerCycle {
+		os.Exit(0)
+	}
+
 }
 
 func (c *client) String() string {
@@ -71,12 +90,12 @@ func (c *client) reconcileState() {
 	c.serverCycle++
 	if c.cliSimulation == nil {
 		// will happen once when the client connects because c.cliObj is nil
-		for _, o := range c.serverState {
+		if c.serverState != nil {
+			o := c.serverState
 			if o.clientID == c.id {
 				c.cliSimulation = &obj{
 					velocity: 1.,
 					pos:      o.pos,
-					id:       o.id,
 					cycle:    o.cycle,
 					clientID: o.clientID,
 				}
@@ -84,9 +103,10 @@ func (c *client) reconcileState() {
 			c.serverCycle = o.cycle
 		}
 	}
-	for _, oo := range c.serverState {
+	if c.serverState != nil {
+		oo := c.serverState
 		if oo.clientID == c.id {
-			op := oo
+			op := *oo
 			o := &op
 			actions := c.actions.All()
 			// loop until
@@ -112,17 +132,23 @@ func (c *client) reconcileState() {
 				o.update(i)
 			}
 			// TODO: make this a smooth transition
+			// need to add some stretching effect instead of jump
 			c.cliSimulation = o
 		}
 	}
 }
 
 func (c *client) sendUserEvents() {
-	c.server.Message(clientMsg{
+	ip := c.actions.Last(5)
+	if len(ip) == 0 {
+		return
+	}
+	m := clientMsg{
 		client:      c,
-		inputs:      c.actions.Last(5),
+		inputs:      ip,
 		serverCycle: &c.serverCycle,
-	})
+	}
+	c.server.Message(m)
 }
 func (c *client) handleUserEvents() {
 	if c.cliSimulation == nil {
@@ -132,12 +158,13 @@ func (c *client) handleUserEvents() {
 		return
 	}
 	newVel := c.rnd.Float64()
-	ci := clientInputs{
+	ci := clientInput{
 		velocity: &newVel,
 		sc:       c.serverCycle,
 	}
 	c.actions.Add(ci)
 	c.cliSimulation.act(ci)
+	log.Println(ci)
 }
 func (c *client) handleMessages() {
 	c.serverMsgLock.Lock()
@@ -157,24 +184,7 @@ func (c *client) Setup() error {
 	c.clock.subscribe(c)
 	return nil
 }
-func (c *client) update(t time.Time) {
-	if t.Before(c.lastUpdate.Add(time.Second / 60)) {
-		return
-	}
-	// log.Println("client server cycle", c.serverCycle)
-	// dt := t.Sub(c.lastUpdate)
-	c.lastUpdate = t
-	c.handleMessages()
-	c.reconcileState()
-	c.handleUserEvents()
-	c.sendUserEvents()
-	c.updateObjects()
 
-	if c.serverCycle == 200 {
-		os.Exit(0)
-	}
-
-}
 func (c *client) updateObjects() {
 	c.cliSimulation.update(c.serverCycle)
 }
@@ -182,35 +192,33 @@ func (c *client) updateObjects() {
 type clientMsg struct {
 	connect     bool
 	client      *client
-	inputs      []clientInputs
+	inputs      []clientInput
 	serverCycle *int
 }
 
-type clientInputs struct {
+type clientInput struct {
 	sc       int
 	velocity *float64
 }
 
+func (c clientInput) String() string {
+	if c.velocity != nil {
+		return fmt.Sprintf("sc: %d, velocity: %v", c.sc, *c.velocity)
+	}
+	return fmt.Sprintf("sc: %d, velocity: nil", c.sc)
+}
+
 type server struct {
-	cliMsgLock  *sync.Mutex
-	cliMsg      []clientMsg
-	clients     []*client
-	clock       *clock
-	objs        []obj
+	cliMsgLock      *sync.Mutex
+	cliMsg          []clientMsg
+	clients         []*client
+	clock           *clock
+	clientState     *obj
+	scLastInput     int
+	newClientInputs []clientInput
+
 	serverCycle int
 	lastUpdate  time.Time
-}
-
-func (s *server) String() string {
-	if len(s.objs) > 0 {
-		return fmt.Sprintf("server: servercycle: %d, obj %s", s.serverCycle, s.objs[0])
-	}
-	return "server: no objs"
-}
-
-func (s *server) Setup() error {
-	s.clock.subscribe(s)
-	return nil
 }
 
 func (s *server) update(t time.Time) {
@@ -221,8 +229,26 @@ func (s *server) update(t time.Time) {
 	s.lastUpdate = t
 	s.serverCycle++
 	s.handleMessages()
+	s.handleUserEvents()
 	s.updateObjects()
 	s.sendState()
+}
+
+func (s *server) String() string {
+	return fmt.Sprintf("server: servercycle: %d, obj %s", s.serverCycle, s.clientState)
+}
+
+func (s *server) Setup() error {
+	s.clock.subscribe(s)
+	return nil
+}
+
+func (s *server) handleUserEvents() {
+	for _, a := range s.newClientInputs {
+		s.clientState.act(a)
+		s.scLastInput = a.sc
+	}
+	s.newClientInputs = nil
 }
 
 func (s *server) handleMessages() {
@@ -231,34 +257,26 @@ func (s *server) handleMessages() {
 		switch {
 		case m.connect:
 			s.clients = append(s.clients, m.client)
-			s.objs = append(s.objs, obj{
+			s.clientState = &obj{
 				velocity: 0,
 				pos:      0,
-				id:       0,
 				cycle:    s.serverCycle,
 				clientID: m.client.id,
-			})
-		case m.inputs != nil:
-			// clientid := m.client.id
-
-			// ca := server list of client actions
-			// cs := server list of states
-			// ca .append(newaction)
-			// sort
-			// rollback state to a specific time
-			// linked list insert at position looping over the rest
-			//
-
-			// velocity := *m.inputs.velocity
-			// serverCycle := *m.serverCycle
-			// _, _, _ = clientid, velocity, serverCycle
-			// for i := range s.objs {
-			// 	if s.objs[i].id == clientid {
-			// 		s.objs[i].velocity = velocity
-			// 		// log.Printf("client server cycle: %d, server cycle: %d\n", serverCycle, s.serverCycle)
-			// 		break
-			// 	}
-			// }
+			}
+			s.scLastInput = -1
+			s.newClientInputs = nil
+		case len(m.inputs) != 0:
+			// not concerned with out of sequence actions from client
+			// use the timeOfLastInput to get only new inputs
+			// then store them until the next update.
+			for i, ip := range m.inputs {
+				if ip.sc < s.scLastInput {
+					continue
+				}
+				ta := make([]clientInput, len(m.inputs)-i)
+				copy(ta, m.inputs[i:])
+				s.newClientInputs = ta
+			}
 		}
 	}
 	s.cliMsg = nil
@@ -269,15 +287,17 @@ func (s *server) sendState() {
 		if s.clients[i] == nil {
 			continue
 		}
+		o := *s.clientState
 		s.clients[i].Message(serverMsg{
-			state: s.objs,
+			state: &o,
 		})
 	}
 }
 func (s *server) updateObjects() {
-	for i := range s.objs {
-		s.objs[i].update(s.serverCycle)
+	if s.clientState == nil {
+		return
 	}
+	s.clientState.update(s.serverCycle)
 }
 func (s *server) Message(c clientMsg) {
 	s.cliMsgLock.Lock()
@@ -286,7 +306,7 @@ func (s *server) Message(c clientMsg) {
 }
 
 type serverMsg struct {
-	state []obj
+	state *obj
 }
 
 type clock struct {
@@ -332,20 +352,19 @@ type updater interface {
 type obj struct {
 	velocity float64
 	pos      float64
-	id       int
 	cycle    int
 	clientID int
 }
 
 func (o obj) String() string {
-	return fmt.Sprintf("id: %d pos: %f velocity: %f", o.id, o.pos, o.velocity)
+	return fmt.Sprintf("id: %d pos: %f velocity: %f", o.clientID, o.pos, o.velocity)
 }
 func (o *obj) update(sc int) {
 	o.pos += o.velocity
 	o.cycle = sc
 }
 
-func (o *obj) act(a clientInputs) {
+func (o *obj) act(a clientInput) {
 	if a.velocity == nil {
 		return
 	}

@@ -75,3 +75,10 @@ server a1-1  a3-10 ... a10
 // we need to skip 5 message - from message a6 to a10
 // to not receive message a6 when we send a11. 
 a1 a2 a3 a4 a5| a6 |a7 a8 a9 a10 a11|
+
+
+c s cl
+1 0 0
+2 0 1
+3 0
+3 1 1
