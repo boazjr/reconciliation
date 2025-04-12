@@ -38,10 +38,10 @@ func main() {
 	c.Setup(n)
 
 	c2 := &client{
-		id:            1,
+		id:            2,
 		clock:         clk,
 		serverMsgLock: &sync.Mutex{},
-		rnd:           rand.New(rand.NewSource(0)),
+		rnd:           rand.New(rand.NewSource(1)),
 		actions:       NewCircularArray[clientInput](20),
 	}
 	c2.Setup(n)
@@ -56,7 +56,7 @@ type client struct {
 	serverMsgLock  *sync.Mutex
 	serverMessages []serverMsg
 	clock          *clock
-	serverState    *obj
+	cliServerState *obj
 	// cliSimulation
 	cliSimulation *obj
 	// actions - velocity and server cycle // circularArray
@@ -91,7 +91,7 @@ func (c *client) update(t time.Time) {
 
 func (c *client) String() string {
 	if c.cliSimulation != nil {
-		return fmt.Sprintf("client: cycle: %d, obj %s, serverState: %s, ping: %d", c.cycle, c.cliSimulation, c.serverState, c.ping)
+		return fmt.Sprintf("client: cycle: %d, obj %s, serverState: %s, ping: %d", c.cycle, c.cliSimulation, c.cliServerState, c.ping)
 	}
 	return fmt.Sprintf("client: cycle: %d, obj: %v, ping: %d", c.cycle, nil, c.ping)
 }
@@ -105,8 +105,8 @@ func (c *client) Message(s serverMsg) {
 func (c *client) reconcileState() {
 	if c.cliSimulation == nil {
 		// will happen once when the client connects because c.cliObj is nil
-		if c.serverState != nil {
-			o := c.serverState
+		if c.cliServerState != nil {
+			o := c.cliServerState
 			if o.clientID == c.id {
 				c.cliSimulation = &obj{
 					velocity: 1.,
@@ -117,9 +117,9 @@ func (c *client) reconcileState() {
 			}
 		}
 	}
-	if c.serverState != nil {
-		if c.serverState.clientID == c.id {
-			c.cliSimulation = simulateObj(c.serverState, c.actions.All(), c.cycle)
+	if c.cliServerState != nil {
+		if c.cliServerState.clientID == c.id {
+			c.cliSimulation = simulateObj(c.cliServerState, c.actions.All(), c.cycle)
 		}
 	}
 }
@@ -199,7 +199,7 @@ func (c *client) handleMessages() {
 			}
 		}
 		if m.state != nil {
-			c.serverState = m.state
+			c.cliServerState = m.state
 		}
 	}
 	c.serverMsgLock.Unlock()
@@ -274,6 +274,28 @@ func (s *server) NewConnection(cli *client) *connection {
 	return con
 }
 
+func (s *server) update(t time.Time) {
+	if t.Before(s.lastUpdate.Add(time.Second / 60)) {
+		return
+	}
+	// log.Println("server cycle", s.serverCycle)
+	s.lastUpdate = t
+	s.cycle++
+	// deal with user inputs
+	for _, c := range s.sc {
+		c.handleMessages(s.cycle)
+		c.handleUserEvents(s.cycle)
+	}
+	// update world state
+	for _, c := range s.sc {
+		c.updateObjects(s.cycle)
+	}
+	// send back the state
+	for _, c := range s.sc {
+		c.sendState(s.cycle)
+	}
+}
+
 type serverClient struct {
 	cliMsgLock        *sync.Mutex
 	cliMsg            []clientMsg
@@ -282,24 +304,6 @@ type serverClient struct {
 	newClientInputs   []clientInput
 	con               *connection
 	lastClientMessage *int
-}
-
-func (s *server) update(t time.Time) {
-	if t.Before(s.lastUpdate.Add(time.Second / 60)) {
-		return
-	}
-	// log.Println("server cycle", s.serverCycle)
-	s.lastUpdate = t
-	s.cycle++
-	for _, c := range s.sc {
-		c.update(s.cycle)
-	}
-}
-func (s *serverClient) update(cycle int) {
-	s.handleMessages(cycle)
-	s.handleUserEvents(cycle)
-	s.updateObjects(cycle)
-	s.sendState(cycle)
 }
 
 func (s *server) String() string {
