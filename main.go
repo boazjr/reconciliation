@@ -86,7 +86,7 @@ func (c *client) update(t time.Time) {
 
 func (c *client) String() string {
 	if c.cliSimulation != nil {
-		return fmt.Sprintf("client: cycle: %d, obj %s, ping: %d", c.cycle, c.cliSimulation, c.ping)
+		return fmt.Sprintf("client: cycle: %d, obj %s, serverState: %s, ping: %d", c.cycle, c.cliSimulation, c.serverState, c.ping)
 	}
 	return fmt.Sprintf("client: cycle: %d, obj: %v, ping: %d", c.cycle, nil, c.ping)
 }
@@ -113,40 +113,43 @@ func (c *client) reconcileState() {
 		}
 	}
 	if c.serverState != nil {
-		oo := c.serverState
-		if oo.clientID == c.id {
-			op := *oo
-			o := &op
-			actions := c.actions.All()
-			// loop until
-			ai := 0
-			for i := o.cycle; i <= c.cycle; i++ {
-				for {
-					if ai >= len(actions) {
-						break
-					}
-					a := actions[ai]
-					if a.sc < o.cycle {
-						ai++
-						continue
-					}
-					if a.sc == o.cycle {
-						log.Println("reconcile messages", a.sc)
-						o.act(a)
-						ai++
-						continue
-					}
-					if a.sc > o.cycle {
-						break
-					}
-				}
-				o.update(i)
-			}
-			// TODO: make this a smooth transition
-			// need to add some stretching effect instead of jump
-			c.cliSimulation = o
+		if c.serverState.clientID == c.id {
+			c.cliSimulation = simulateObj(c.serverState, c.actions.All(), c.cycle)
 		}
 	}
+}
+
+func simulateObj(serverState *obj, actions []clientInput, curCycle int) *obj {
+	oo := serverState
+	op := *oo
+	o := &op
+	// loop until
+	ai := 0
+	for i := o.cycle + 1; i < curCycle; i++ {
+		for {
+			if ai >= len(actions) {
+				break
+			}
+			a := actions[ai]
+			if a.cycle < i {
+				ai++
+				continue
+			}
+			if a.cycle == i {
+				log.Println("client reconcile messages", a)
+				o.act(a)
+				ai++
+				continue
+			}
+			if a.cycle > i {
+				break
+			}
+		}
+		o.update(i)
+	}
+	// TODO: make this a smooth transition
+	// need to add some stretching effect instead of jump
+	return o
 }
 
 func (c *client) sendToServer() {
@@ -168,7 +171,7 @@ func (c *client) handleUserEvents() {
 	newVel := c.rnd.Float64()
 	ci := clientInput{
 		velocity: &newVel,
-		sc:       c.cycle + c.ping/2 + 2,
+		cycle:    c.cycle + 2, // 2 is the speed at which the client reacts to the input
 	}
 	c.actions.Add(ci)
 	log.Println(ci)
@@ -182,8 +185,8 @@ func (c *client) handleMessages() {
 			if p < 10 {
 				c.ping = p
 				if c.nextCorrection < c.cycle {
-					offset = p / 2
-					c.nextCorrection = c.cycle + offset + p
+					offset = p
+					c.nextCorrection = c.cycle + offset + 4
 					p := c.cycle
 					c.cycle = m.cycle + offset
 					log.Println("made correction", p, c.cycle)
@@ -230,15 +233,15 @@ func (c clientMsg) String() string {
 }
 
 type clientInput struct {
-	sc       int
+	cycle    int
 	velocity *float64
 }
 
 func (c clientInput) String() string {
 	if c.velocity != nil {
-		return fmt.Sprintf("clientInput(sc: %d, velocity: %f)", c.sc, *c.velocity)
+		return fmt.Sprintf("clientInput(sc: %d, velocity: %f)", c.cycle, *c.velocity)
 	}
-	return fmt.Sprintf("clientInput(sc: %d, velocity: nil)", c.sc)
+	return fmt.Sprintf("clientInput(sc: %d, velocity: nil)", c.cycle)
 }
 
 type server struct {
@@ -282,15 +285,16 @@ func (s *server) Setup(n *network) error {
 func (s *server) handleUserEvents() {
 	n := []clientInput{}
 	for _, a := range s.newClientInputs {
-		if a.sc < s.cycle {
+		if a.cycle < s.cycle {
 			continue
 		}
-		if a.sc == s.cycle {
+		if a.cycle == s.cycle {
 			s.clientState.act(a)
-			s.scLastInput = a.sc
+			s.scLastInput = a.cycle
+			log.Println("server reconciling message", a)
 			continue
 		}
-		if a.sc > s.cycle {
+		if a.cycle > s.cycle {
 			n = append(n, a)
 		}
 	}
@@ -321,7 +325,7 @@ func (s *server) handleMessages() {
 			// use the timeOfLastInput to get only new inputs
 			// then store them until the next update.
 			for i, ip := range m.inputs {
-				if ip.sc < s.scLastInput {
+				if ip.cycle < s.scLastInput {
 					continue
 				}
 				ta := make([]clientInput, len(m.inputs)-i)
