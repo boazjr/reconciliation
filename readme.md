@@ -34,7 +34,7 @@ client
 sc v  p 
 1  1  0 - client performed change in velocity after the update
 2  1  0+1 - change in velocity at sc 
-3  1  1+1
+3  1  2
 4  1  3
 5  1  4
 6  1  5
@@ -61,3 +61,17 @@ sc,v - multiples
 
 server updates to client
 sc,p - most recent position
+
+
+
+// when client message a2 is dropped
+// by the time the server is aware of it, and alerts 
+// the client, it's too late to send it again
+// and simulate it on the server
+client a1-1  a2-5 a3-10 ... a10
+server a1-1  a3-10 ... a10
+
+
+// we need to skip 5 message - from message a6 to a10
+// to not receive message a6 when we send a11. 
+a1 a2 a3 a4 a5| a6 |a7 a8 a9 a10 a11|
