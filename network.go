@@ -112,7 +112,7 @@ func (c *connection) update() {
 func (c *connection) SendToClient(m serverMsg) {
 	c.sLock.Lock()
 	defer c.sLock.Unlock()
-	c.serverMsgs = append(c.serverMsgs, NetworkWrapper[serverMsg]{
+	c.serverMsgs = append(c.serverMsgs, NetworkWrapper[serverMsg]{ //TODO: deep copy
 		msg:     m,
 		counter: c.rnd.Intn(2) + 3,
 	})
@@ -124,7 +124,7 @@ func (c connection) String() string {
 func (c *connection) SendToServer(m clientMsg) {
 	c.cLock.Lock()
 	defer c.cLock.Unlock()
-	c.clientMsgs = append(c.clientMsgs, NetworkWrapper[clientMsg]{
+	c.clientMsgs = append(c.clientMsgs, NetworkWrapper[clientMsg]{ //TODO: deep copy
 		msg:     m,
 		counter: c.rnd.Intn(2) + 3,
 	})
