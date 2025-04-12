@@ -9,6 +9,8 @@
 * The client drops a message - inconsistency between the state on the client and server
 * input is too old - drop it.
 * client will need to change the simulation so it's better aligned with the server.
+* support multiple objects
+* add robot objects
 * connect multiple clients to a single server
 * connect multiple clients to multiple connected servers
 * each server will own a chunk of the space
