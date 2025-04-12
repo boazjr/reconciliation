@@ -65,6 +65,7 @@ func (n *network) update(t time.Time) {
 }
 
 func (n network) String() string {
+	return ""
 	sb := &strings.Builder{}
 	sb.WriteString(fmt.Sprintf("clientMSG: %d ", len(n.clientMsgs)))
 	// for i := 0; i < len(n.clientMsgs); i++ {

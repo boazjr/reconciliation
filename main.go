@@ -10,21 +10,10 @@ import (
 	"time"
 )
 
-const maxServerCycle = 200
+const maxClientCycle = 1110
 
 func main() {
-	// a := []int{1, 2, 3, 4}
-	// for i := 0; i < len(a); i++ {
-	// 	if a[i] == 4 {
-	// 		a = append(a[:i], a[i+1:]...)
-	// 		i--
-	// 		continue
-	// 	}
-	// 	fmt.Println(a, a[i])
-	// }
-	fmt.Println(6.496125-4.640089, 0.928018)
 	log.SetFlags(log.Lshortfile)
-	fmt.Println("start")
 	clk := &clock{
 		updatersLock: &sync.Mutex{},
 	}
@@ -67,12 +56,13 @@ type client struct {
 	// cliSimulation
 	cliSimulation *obj
 	// actions - velocity and server cycle // circularArray
-	actions     *CircularArray[clientInput]
-	lastUpdate  time.Time
-	serverCycle int
-	rnd         *rand.Rand
-	network     *network
-	ping        int
+	actions        *CircularArray[clientInput]
+	lastUpdate     time.Time
+	cycle          int
+	rnd            *rand.Rand
+	network        *network
+	ping           int
+	nextCorrection int
 	// userEvents
 }
 
@@ -81,13 +71,14 @@ func (c *client) update(t time.Time) {
 		return
 	}
 	c.lastUpdate = t
+	c.cycle++
 	c.handleMessages()
 	c.reconcileState()
 	c.handleUserEvents()
-	c.sendUserEvents()
+	c.sendToServer()
 	c.updateObjects()
 
-	if c.serverCycle == maxServerCycle {
+	if c.cycle > maxClientCycle {
 		os.Exit(0)
 	}
 
@@ -95,9 +86,9 @@ func (c *client) update(t time.Time) {
 
 func (c *client) String() string {
 	if c.cliSimulation != nil {
-		return fmt.Sprintf("client: servercycle: %d, obj %s, ping: %d", c.serverCycle, c.cliSimulation, c.ping)
+		return fmt.Sprintf("client: cycle: %d, obj %s, ping: %d", c.cycle, c.cliSimulation, c.ping)
 	}
-	return fmt.Sprintf("client: servercycle: %d, obj: %v, ping: %d", c.serverCycle, nil, c.ping)
+	return fmt.Sprintf("client: cycle: %d, obj: %v, ping: %d", c.cycle, nil, c.ping)
 }
 
 func (c *client) Message(s serverMsg) {
@@ -107,7 +98,6 @@ func (c *client) Message(s serverMsg) {
 }
 
 func (c *client) reconcileState() {
-	c.serverCycle++
 	if c.cliSimulation == nil {
 		// will happen once when the client connects because c.cliObj is nil
 		if c.serverState != nil {
@@ -120,7 +110,6 @@ func (c *client) reconcileState() {
 					clientID: o.clientID,
 				}
 			}
-			// c.serverCycle = o.cycle
 		}
 	}
 	if c.serverState != nil {
@@ -131,7 +120,7 @@ func (c *client) reconcileState() {
 			actions := c.actions.All()
 			// loop until
 			ai := 0
-			for i := o.cycle; i <= c.serverCycle; i++ {
+			for i := o.cycle; i <= c.cycle; i++ {
 				for {
 					if ai >= len(actions) {
 						break
@@ -142,7 +131,9 @@ func (c *client) reconcileState() {
 						continue
 					}
 					if a.sc == o.cycle {
+						log.Println("reconcile messages", a.sc)
 						o.act(a)
+						ai++
 						continue
 					}
 					if a.sc > o.cycle {
@@ -158,15 +149,12 @@ func (c *client) reconcileState() {
 	}
 }
 
-func (c *client) sendUserEvents() {
+func (c *client) sendToServer() {
 	ip := c.actions.Last(5)
-	if len(ip) == 0 {
-		return
-	}
 	m := clientMsg{
-		client:      c,
-		inputs:      ip,
-		serverCycle: c.serverCycle,
+		client: c,
+		inputs: ip,
+		cycle:  c.cycle,
 	}
 	c.network.SendToServer(m)
 }
@@ -180,21 +168,30 @@ func (c *client) handleUserEvents() {
 	newVel := c.rnd.Float64()
 	ci := clientInput{
 		velocity: &newVel,
-		sc:       c.serverCycle,
+		sc:       c.cycle + c.ping/2 + 2,
 	}
 	c.actions.Add(ci)
-	c.cliSimulation.act(ci)
 	log.Println(ci)
 }
 func (c *client) handleMessages() {
 	c.serverMsgLock.Lock()
 	for _, m := range c.serverMessages {
 		if m.lastCycleReceived != nil {
-			c.ping = c.serverCycle - *m.lastCycleReceived
+			p := c.cycle - *m.lastCycleReceived
+			offset := 0
+			if p < 10 {
+				c.ping = p
+				if c.nextCorrection < c.cycle {
+					offset = p / 2
+					c.nextCorrection = c.cycle + offset + p
+					p := c.cycle
+					c.cycle = m.cycle + offset
+					log.Println("made correction", p, c.cycle)
+				}
+			}
 		}
 		if m.state != nil {
 			c.serverState = m.state
-
 		}
 	}
 	c.serverMsgLock.Unlock()
@@ -202,28 +199,28 @@ func (c *client) handleMessages() {
 func (c *client) Setup(n *network) error {
 	n.client = c
 	c.network.SendToServer(clientMsg{
-		connect:     true,
-		client:      c,
-		serverCycle: c.serverCycle,
+		connect: true,
+		client:  c,
+		cycle:   c.cycle,
 	})
 	c.clock.subscribe(c)
 	return nil
 }
 
 func (c *client) updateObjects() {
-	c.cliSimulation.update(c.serverCycle)
+	c.cliSimulation.update(c.cycle)
 }
 
 type clientMsg struct {
-	connect     bool
-	client      *client
-	inputs      []clientInput
-	serverCycle int
+	connect bool
+	client  *client
+	inputs  []clientInput
+	cycle   int
 }
 
 func (c clientMsg) String() string {
 	sb := &strings.Builder{}
-	sb.WriteString(fmt.Sprintf("clientMsg(connect: %t, sc: %d, inputs: ", c.connect, c.serverCycle))
+	sb.WriteString(fmt.Sprintf("clientMsg(connect: %t, sc: %d, inputs: ", c.connect, c.cycle))
 
 	for i, ip := range c.inputs {
 		sb.WriteString(fmt.Sprint(i, ip))
@@ -253,7 +250,7 @@ type server struct {
 	scLastInput       int
 	newClientInputs   []clientInput
 	network           *network
-	serverCycle       int
+	cycle             int
 	lastUpdate        time.Time
 	lastClientMessage *int
 }
@@ -264,7 +261,7 @@ func (s *server) update(t time.Time) {
 	}
 	// log.Println("server cycle", s.serverCycle)
 	s.lastUpdate = t
-	s.serverCycle++
+	s.cycle++
 	s.handleMessages()
 	s.handleUserEvents()
 	s.updateObjects()
@@ -272,22 +269,32 @@ func (s *server) update(t time.Time) {
 }
 
 func (s *server) String() string {
-	return fmt.Sprintf("server: servercycle: %d, obj %s", s.serverCycle, s.clientState)
+	return fmt.Sprintf("server: cycle: %d, obj %s", s.cycle, s.clientState)
 }
 
 func (s *server) Setup(n *network) error {
-	s.serverCycle = 1000
+	s.cycle = 1000
 	n.server = s
 	s.clock.subscribe(s)
 	return nil
 }
 
 func (s *server) handleUserEvents() {
+	n := []clientInput{}
 	for _, a := range s.newClientInputs {
-		s.clientState.act(a)
-		s.scLastInput = a.sc
+		if a.sc < s.cycle {
+			continue
+		}
+		if a.sc == s.cycle {
+			s.clientState.act(a)
+			s.scLastInput = a.sc
+			continue
+		}
+		if a.sc > s.cycle {
+			n = append(n, a)
+		}
 	}
-	s.newClientInputs = nil
+	s.newClientInputs = n
 }
 
 func ptr[T any](t T) *T {
@@ -297,14 +304,14 @@ func ptr[T any](t T) *T {
 func (s *server) handleMessages() {
 	s.cliMsgLock.Lock()
 	for _, m := range s.cliMsg {
-		s.lastClientMessage = ptr(m.serverCycle)
+		s.lastClientMessage = ptr(m.cycle)
 		switch {
 		case m.connect:
 			s.client = m.client
 			s.clientState = &obj{
-				velocity: 0,
+				velocity: 0.5,
 				pos:      0,
-				cycle:    s.serverCycle,
+				cycle:    s.cycle,
 				clientID: m.client.id,
 			}
 			s.scLastInput = -1
@@ -332,6 +339,7 @@ func (s *server) sendState() {
 	}
 	o := *s.clientState
 	s.network.SendToClient(serverMsg{
+		cycle:             s.cycle,
 		state:             &o,
 		lastCycleReceived: s.lastClientMessage,
 	})
@@ -341,7 +349,7 @@ func (s *server) updateObjects() {
 	if s.clientState == nil {
 		return
 	}
-	s.clientState.update(s.serverCycle)
+	s.clientState.update(s.cycle)
 }
 func (s *server) Message(c clientMsg) {
 	s.cliMsgLock.Lock()
@@ -350,6 +358,7 @@ func (s *server) Message(c clientMsg) {
 }
 
 type serverMsg struct {
+	cycle             int
 	state             *obj
 	lastCycleReceived *int
 }

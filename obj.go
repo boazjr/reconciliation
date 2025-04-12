@@ -10,7 +10,7 @@ type obj struct {
 }
 
 func (o obj) String() string {
-	return fmt.Sprintf("obj(id: %d pos: %f velocity: %f)", o.clientID, o.pos, o.velocity)
+	return fmt.Sprintf("obj(id: %d pos: %f velocity: %f, cycle: %d)", o.clientID, o.pos, o.velocity, o.cycle)
 }
 func (o *obj) update(sc int) {
 	if o == nil {
