@@ -2,15 +2,16 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hajimehoshi/ebiten/v2"
 )
 
 type network struct {
-	clk        *clock
+	clk        ui
 	cons       []*connection
 	lastUpdate time.Time
 	server     *server
@@ -32,6 +33,7 @@ func (n *network) update(t time.Time) {
 	}
 }
 
+func (n *network) Draw(screen *ebiten.Image) {}
 func (n *network) Setup() error {
 	n.clk.subscribe(n)
 	return nil
@@ -77,7 +79,7 @@ func newConnection(cli *client, ser *server) *connection {
 }
 
 func (c *connection) update() {
-	log.Println("!!!", c)
+	// log.Println("!!!", c)
 	c.cLock.Lock()
 	for i := 0; i < len(c.clientMsgs); i++ {
 		cm := c.clientMsgs[i]

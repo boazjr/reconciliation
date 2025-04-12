@@ -2,37 +2,30 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"log"
 	"math/rand"
-	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/hajimehoshi/ebiten/v2"
 )
 
 const maxClientCycle = 1110
 
-func exp() {
-	objs := []obj{obj{velocity: 10}}
-	o := objs[0]
-	o.update(3)
-	fmt.Println(objs)
-}
-
 func main() {
-	// exp()
-	// return
 	log.SetFlags(log.Lshortfile)
-	clk := &clock{
-		updatersLock: &sync.Mutex{},
-	}
+
+	// g := newCmdline()
+	g := newGraphics()
+
 	n := &network{
-		clk: clk,
+		clk: g,
 	}
 	n.Setup()
-	go clk.Run()
 	s := &server{
-		clock:      clk,
+		viz:        g,
 		worldState: &worldState{},
 	}
 
@@ -40,7 +33,7 @@ func main() {
 
 	c := &client{
 		id:            1,
-		clock:         clk,
+		viz:           g,
 		serverMsgLock: &sync.Mutex{},
 		rnd:           rand.New(rand.NewSource(0)),
 		actions:       NewCircularArray[clientInput](20),
@@ -49,23 +42,24 @@ func main() {
 
 	c2 := &client{
 		id:            2,
-		clock:         clk,
+		viz:           g,
 		serverMsgLock: &sync.Mutex{},
-		rnd:           rand.New(rand.NewSource(1)),
+		rnd:           rand.New(rand.NewSource(3)),
 		actions:       NewCircularArray[clientInput](20),
 	}
 	c2.Setup(n)
 
-	wg := &sync.WaitGroup{}
-	wg.Add(1)
-	wg.Wait()
+	// clk.Run()
+	if err := ebiten.RunGame(g); err != nil {
+		log.Fatal(err)
+	}
 }
 
 type client struct {
 	id             int
 	serverMsgLock  *sync.Mutex
 	serverMessages []serverMsg
-	clock          *clock
+	viz            ui
 	cliServerState *obj
 	// cliSimulation
 	cliSimulation *obj
@@ -82,6 +76,14 @@ type client struct {
 	// userEvents
 }
 
+func (c *client) Draw(screen *ebiten.Image) {
+	height := (c.id + 1) * 10 * 3
+	c.worldState.Draw(screen, height)
+	if c.cliSimulation == nil {
+		return
+	}
+	draw(screen, int(c.cliSimulation.pos), height, colors[c.id])
+}
 func (c *client) update(t time.Time) {
 	if t.Before(c.lastUpdate.Add(time.Second / 60)) {
 		return
@@ -94,17 +96,18 @@ func (c *client) update(t time.Time) {
 	c.sendToServer()
 	c.updateObjects()
 
-	if c.cycle > maxClientCycle {
-		os.Exit(0)
-	}
-
 }
 
 func (c *client) String() string {
+	cs := "nil"
 	if c.cliSimulation != nil {
-		return fmt.Sprintf("client %d: cycle: %d, simulation: %s, worldState: %v, ping: %d", c.id, c.cycle, c.cliSimulation, c.worldState.players, c.ping)
+		cs = fmt.Sprint(c.cliSimulation)
 	}
-	return fmt.Sprintf("client %d: cycle: %d, simulation: %v, worldState: %v, ping: %d", c.id, c.cycle, nil, c.worldState.players, c.ping)
+	p := "nil"
+	if c.worldState != nil {
+		p = fmt.Sprint(c.worldState.players)
+	}
+	return fmt.Sprintf("client %d: cycle: %d, simulation: %v, worldState: %v, ping: %d", c.id, c.cycle, cs, p, c.ping)
 }
 
 func (c *client) Message(s serverMsg) {
@@ -152,7 +155,7 @@ func simulateObj(serverState *obj, actions []clientInput, curCycle int) *obj {
 				continue
 			}
 			if a.cycle == i {
-				log.Println("client reconcile messages", a)
+				// log.Println("client reconcile messages", a)
 				o.act(a)
 				ai++
 				continue
@@ -190,7 +193,7 @@ func (c *client) handleUserEvents() {
 		cycle:    c.cycle + 2, // 2 is the speed at which the client reacts to the input
 	}
 	c.actions.Add(ci)
-	log.Println(ci)
+	// log.Println(ci)
 }
 func (c *client) handleMessages() {
 	c.serverMsgLock.Lock()
@@ -205,7 +208,8 @@ func (c *client) handleMessages() {
 					c.nextCorrection = c.cycle + offset + 4
 					p := c.cycle
 					c.cycle = m.cycle + offset
-					log.Println("made correction", p, c.cycle)
+					_ = p
+					// log.Println("made correction", p, c.cycle)
 				}
 			}
 		}
@@ -231,7 +235,7 @@ func (c *client) Setup(n *network) error {
 		client:  c,
 		cycle:   c.cycle,
 	})
-	c.clock.subscribe(c)
+	c.viz.subscribe(c)
 	return nil
 }
 
@@ -270,13 +274,16 @@ func (c clientInput) String() string {
 }
 
 type server struct {
-	clock      *clock
+	viz        ui
 	cycle      int
 	lastUpdate time.Time
 	worldState *worldState
 	sc         []*serverClient
 }
 
+func (s *server) Draw(screen *ebiten.Image) {
+	s.worldState.Draw(screen, 10)
+}
 func (s *server) client(c *client) *serverClient {
 	for _, cl := range s.sc {
 		if cl.con.client.id == c.id {
@@ -322,6 +329,27 @@ type worldState struct {
 	players []*obj
 }
 
+func (w *worldState) Draw(screen *ebiten.Image, height int) {
+	if w == nil {
+		return
+	}
+	for _, p := range w.players {
+		draw(screen, int(p.pos), height, colors[p.clientID])
+	}
+}
+
+func draw(screen *ebiten.Image, x, y int, c color.Color) {
+	screen.Set(x+1, y+1, c)
+	screen.Set(x+1, y, c)
+	screen.Set(x+1, y-1, c)
+	screen.Set(x, y+1, c)
+	screen.Set(x, y, c)
+	screen.Set(x, y-1, c)
+	screen.Set(x-1, y+1, c)
+	screen.Set(x-1, y, c)
+	screen.Set(x-1, y-1, c)
+}
+
 func (w *worldState) update(cycle int) {
 	// update world state
 	for _, c := range w.players {
@@ -362,7 +390,7 @@ func (s *server) Setup(n *network) error {
 	s.cycle = 1000
 	n.server = s
 	// con.server = s //TODO:
-	s.clock.subscribe(s)
+	s.viz.subscribe(s)
 	return nil
 }
 
@@ -385,7 +413,7 @@ func (s *serverClient) handleUserEvents(cycle int) {
 		if a.cycle == cycle {
 			s.server.worldState.getCli(s.con.client.id).act(a)
 			s.cycleLastInput = a.cycle
-			log.Println("server reconciling message", a)
+			// log.Println("server reconciling message", a)
 			continue
 		}
 		if a.cycle > cycle {

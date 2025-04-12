@@ -1,30 +1,38 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"sync"
 	"time"
+
+	"github.com/hajimehoshi/ebiten/v2"
 )
 
-type clock struct {
+func newCmdline() *cmdline {
+	return &cmdline{
+		updatersLock: &sync.Mutex{},
+	}
+}
+
+type cmdline struct {
 	time         time.Time
 	updatersLock *sync.Mutex
 	updaters     []updater
 }
 
-func (c *clock) subscribe(u updater) {
+func (c *cmdline) subscribe(u updater) {
 	c.updatersLock.Lock()
 	c.updaters = append(c.updaters, u)
 	c.updatersLock.Unlock()
 }
 
-func (c *clock) unsubscribe(u updater) {
+func (c *cmdline) unsubscribe(u updater) {
 	c.updatersLock.Lock()
 	c.updaters = append(c.updaters, u)
 	c.updatersLock.Unlock()
 }
 
-func (c *clock) Run() {
+func (c *cmdline) Run() {
 	lastPrint := time.Time{}
 	for {
 		c.time = c.time.Add(time.Millisecond)
@@ -36,7 +44,7 @@ func (c *clock) Run() {
 		if c.time.Sub(lastPrint) > time.Second/60 {
 			lastPrint = c.time
 			for _, u := range c.updaters {
-				fmt.Println(u)
+				log.Println(u)
 			}
 		}
 	}
@@ -44,4 +52,9 @@ func (c *clock) Run() {
 
 type updater interface {
 	update(time.Time)
+	Draw(screen *ebiten.Image)
+}
+
+type ui interface {
+	subscribe(u updater)
 }
