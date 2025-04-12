@@ -58,7 +58,7 @@ type client struct {
 	lastUpdate     time.Time
 	cycle          int
 	rnd            *rand.Rand
-	network        *connection
+	con            *connection
 	ping           int
 	nextCorrection int
 	// userEvents
@@ -157,7 +157,7 @@ func (c *client) sendToServer() {
 		inputs: ip,
 		cycle:  c.cycle,
 	}
-	c.network.SendToServer(m)
+	c.con.SendToServer(m)
 }
 func (c *client) handleUserEvents() {
 	if c.cliSimulation == nil {
@@ -197,10 +197,10 @@ func (c *client) handleMessages() {
 	}
 	c.serverMsgLock.Unlock()
 }
-func (c *client) Setup(n *connection) error {
-	c.network = n
-	n.client = c
-	c.network.SendToServer(clientMsg{
+func (c *client) Setup(con *connection) error {
+	c.con = con
+	con.client = c
+	c.con.SendToServer(clientMsg{
 		connect: true,
 		client:  c,
 		cycle:   c.cycle,
@@ -251,7 +251,7 @@ type server struct {
 	clientState       *obj
 	scLastInput       int
 	newClientInputs   []clientInput
-	network           *connection
+	con               *connection
 	cycle             int
 	lastUpdate        time.Time
 	lastClientMessage *int
@@ -274,10 +274,10 @@ func (s *server) String() string {
 	return fmt.Sprintf("server: cycle: %d, obj %s", s.cycle, s.clientState)
 }
 
-func (s *server) Setup(n *connection) error {
-	s.network = n
+func (s *server) Setup(con *connection) error {
+	s.con = con
 	s.cycle = 1000
-	n.server = s
+	con.server = s
 	s.clock.subscribe(s)
 	return nil
 }
@@ -342,7 +342,7 @@ func (s *server) sendState() {
 		return
 	}
 	o := *s.clientState
-	s.network.SendToClient(serverMsg{
+	s.con.SendToClient(serverMsg{
 		cycle:             s.cycle,
 		state:             &o,
 		lastCycleReceived: s.lastClientMessage,
