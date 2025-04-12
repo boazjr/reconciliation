@@ -20,24 +20,21 @@ func main() {
 	n := &network{
 		clk: clk,
 	}
-	con := n.NewConnection()
 	n.Setup()
 	go clk.Run()
 	s := &server{
-		clock:      clk,
-		cliMsgLock: &sync.Mutex{},
+		clock: clk,
 	}
 
-	s.Setup(con)
+	s.Setup(n)
 
 	c := &client{
-		server:        s,
 		clock:         clk,
 		serverMsgLock: &sync.Mutex{},
 		rnd:           rand.New(rand.NewSource(0)),
 		actions:       NewCircularArray[clientInput](20),
 	}
-	c.Setup(con)
+	c.Setup(n)
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
@@ -46,7 +43,6 @@ func main() {
 
 type client struct {
 	id             int
-	server         *server
 	serverMsgLock  *sync.Mutex
 	serverMessages []serverMsg
 	clock          *clock
@@ -61,6 +57,7 @@ type client struct {
 	con            *connection
 	ping           int
 	nextCorrection int
+	network        *network
 	// userEvents
 }
 
@@ -197,9 +194,9 @@ func (c *client) handleMessages() {
 	}
 	c.serverMsgLock.Unlock()
 }
-func (c *client) Setup(con *connection) error {
-	c.con = con
-	con.client = c
+func (c *client) Setup(n *network) error {
+	c.network = n
+	c.con = c.network.ConnectToServer(c)
 	c.con.SendToServer(clientMsg{
 		connect: true,
 		client:  c,
@@ -244,16 +241,29 @@ func (c clientInput) String() string {
 }
 
 type server struct {
+	clock      *clock
+	cycle      int
+	lastUpdate time.Time
+	*serverClient
+}
+
+func (s *server) NewConnection(cli *client) *connection {
+	con := newConnection(cli, s)
+	s.serverClient = &serverClient{
+		cliMsgLock: &sync.Mutex{},
+		con:        con,
+	}
+	return con
+}
+
+type serverClient struct {
 	cliMsgLock        *sync.Mutex
 	cliMsg            []clientMsg
 	client            *client
-	clock             *clock
 	clientState       *obj
-	scLastInput       int
+	cycleLastInput    int
 	newClientInputs   []clientInput
 	con               *connection
-	cycle             int
-	lastUpdate        time.Time
 	lastClientMessage *int
 }
 
@@ -264,37 +274,43 @@ func (s *server) update(t time.Time) {
 	// log.Println("server cycle", s.serverCycle)
 	s.lastUpdate = t
 	s.cycle++
-	s.handleMessages()
-	s.handleUserEvents()
-	s.updateObjects()
-	s.sendState()
+	if s.serverClient == nil {
+		return
+	}
+	s.serverClient.update(s.cycle)
+}
+func (s *serverClient) update(cycle int) {
+	s.handleMessages(cycle)
+	s.handleUserEvents(cycle)
+	s.updateObjects(cycle)
+	s.sendState(cycle)
 }
 
 func (s *server) String() string {
 	return fmt.Sprintf("server: cycle: %d, obj %s", s.cycle, s.clientState)
 }
 
-func (s *server) Setup(con *connection) error {
-	s.con = con
+func (s *server) Setup(n *network) error {
 	s.cycle = 1000
-	con.server = s
+	n.server = s
+	// con.server = s //TODO:
 	s.clock.subscribe(s)
 	return nil
 }
 
-func (s *server) handleUserEvents() {
+func (s *serverClient) handleUserEvents(cycle int) {
 	n := []clientInput{}
 	for _, a := range s.newClientInputs {
-		if a.cycle < s.cycle {
+		if a.cycle < cycle {
 			continue
 		}
-		if a.cycle == s.cycle {
+		if a.cycle == cycle {
 			s.clientState.act(a)
-			s.scLastInput = a.cycle
+			s.cycleLastInput = a.cycle
 			log.Println("server reconciling message", a)
 			continue
 		}
-		if a.cycle > s.cycle {
+		if a.cycle > cycle {
 			n = append(n, a)
 		}
 	}
@@ -305,7 +321,7 @@ func ptr[T any](t T) *T {
 	return &t
 }
 
-func (s *server) handleMessages() {
+func (s *serverClient) handleMessages(cycle int) {
 	s.cliMsgLock.Lock()
 	for _, m := range s.cliMsg {
 		s.lastClientMessage = ptr(m.cycle)
@@ -315,17 +331,17 @@ func (s *server) handleMessages() {
 			s.clientState = &obj{
 				velocity: 0.5,
 				pos:      0,
-				cycle:    s.cycle,
+				cycle:    cycle,
 				clientID: m.client.id,
 			}
-			s.scLastInput = -1
+			s.cycleLastInput = -1
 			s.newClientInputs = nil
 		case len(m.inputs) != 0:
 			// not concerned with out of sequence actions from client
 			// use the timeOfLastInput to get only new inputs
 			// then store them until the next update.
 			for i, ip := range m.inputs {
-				if ip.cycle < s.scLastInput {
+				if ip.cycle < s.cycleLastInput {
 					continue
 				}
 				ta := make([]clientInput, len(m.inputs)-i)
@@ -337,25 +353,25 @@ func (s *server) handleMessages() {
 	s.cliMsg = nil
 	s.cliMsgLock.Unlock()
 }
-func (s *server) sendState() {
+func (s *serverClient) sendState(cycle int) {
 	if s.client == nil {
 		return
 	}
 	o := *s.clientState
 	s.con.SendToClient(serverMsg{
-		cycle:             s.cycle,
+		cycle:             cycle,
 		state:             &o,
 		lastCycleReceived: s.lastClientMessage,
 	})
 	s.lastClientMessage = nil
 }
-func (s *server) updateObjects() {
+func (s *serverClient) updateObjects(cycle int) {
 	if s.clientState == nil {
 		return
 	}
-	s.clientState.update(s.cycle)
+	s.clientState.update(cycle)
 }
-func (s *server) Message(c clientMsg) {
+func (s *serverClient) Message(c clientMsg) {
 	s.cliMsgLock.Lock()
 	s.cliMsg = append(s.cliMsg, c)
 	s.cliMsgLock.Unlock()

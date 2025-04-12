@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"math/rand"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -11,8 +13,14 @@ type network struct {
 	clk        *clock
 	cons       []*connection
 	lastUpdate time.Time
+	server     *server
 }
 
+func (n *network) ConnectToServer(cli *client) *connection {
+	c := n.server.NewConnection(cli)
+	n.cons = append(n.cons, c)
+	return c
+}
 func (n *network) update(t time.Time) {
 	if t.Before(n.lastUpdate.Add(time.Second / 60)) {
 		return
@@ -24,22 +32,16 @@ func (n *network) update(t time.Time) {
 	}
 }
 
-func (n *network) NewConnection() *connection {
-	c := &connection{
-		rnd: rand.New(rand.NewSource(0)),
-	}
-	n.cons = append(n.cons, c)
-	return c
-}
-
 func (n *network) Setup() error {
 	n.clk.subscribe(n)
 	return nil
 }
 
 func (n network) String() string {
-	return ""
 	sb := &strings.Builder{}
+	for _, c := range n.cons {
+		sb.WriteString(c.String())
+	}
 	// sb.WriteString(fmt.Sprintf("clientMSG: %d ", len(n.clientMsgs)))
 	// for i := 0; i < len(n.clientMsgs); i++ {
 	// 	cm := n.clientMsgs[i]
@@ -57,12 +59,26 @@ func (n network) String() string {
 type connection struct {
 	client     *client
 	server     *server
+	sLock      *sync.Mutex
 	serverMsgs []NetworkWrapper[serverMsg]
+	cLock      *sync.Mutex
 	clientMsgs []NetworkWrapper[clientMsg]
 	rnd        *rand.Rand
 }
 
+func newConnection(cli *client, ser *server) *connection {
+	return &connection{
+		client: cli,
+		server: ser,
+		sLock:  &sync.Mutex{},
+		cLock:  &sync.Mutex{},
+		rnd:    rand.New(rand.NewSource(0)),
+	}
+}
+
 func (c *connection) update() {
+	log.Println("!!!", c)
+	c.cLock.Lock()
 	for i := 0; i < len(c.clientMsgs); i++ {
 		cm := c.clientMsgs[i]
 		cm.counter--
@@ -74,7 +90,8 @@ func (c *connection) update() {
 		}
 		c.clientMsgs[i] = cm
 	}
-
+	c.cLock.Unlock()
+	c.sLock.Lock()
 	for i := 0; i < len(c.serverMsgs); i++ {
 		cm := c.serverMsgs[i]
 		cm.counter--
@@ -86,21 +103,27 @@ func (c *connection) update() {
 		}
 		c.serverMsgs[i] = cm
 	}
-
+	c.sLock.Unlock()
 }
 
-func (n *connection) SendToClient(m serverMsg) {
-
-	n.serverMsgs = append(n.serverMsgs, NetworkWrapper[serverMsg]{
+func (c *connection) SendToClient(m serverMsg) {
+	c.sLock.Lock()
+	defer c.sLock.Unlock()
+	c.serverMsgs = append(c.serverMsgs, NetworkWrapper[serverMsg]{
 		msg:     m,
-		counter: n.rnd.Intn(2) + 3,
+		counter: c.rnd.Intn(2) + 3,
 	})
 }
 
-func (n *connection) SendToServer(m clientMsg) {
-	n.clientMsgs = append(n.clientMsgs, NetworkWrapper[clientMsg]{
+func (c connection) String() string {
+	return fmt.Sprintf("connection: smsg %d, cmsg: %d", len(c.serverMsgs), len(c.clientMsgs))
+}
+func (c *connection) SendToServer(m clientMsg) {
+	c.cLock.Lock()
+	defer c.cLock.Unlock()
+	c.clientMsgs = append(c.clientMsgs, NetworkWrapper[clientMsg]{
 		msg:     m,
-		counter: n.rnd.Intn(2) + 3,
+		counter: c.rnd.Intn(2) + 3,
 	})
 }
 

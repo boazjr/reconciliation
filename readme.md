@@ -243,3 +243,17 @@ last cycle server received 10
 ping 10
 next cycle correction when current cycle is 20+ping +offset 2 = 32
 
+
+
+
+## overview
+
+1. create clock
+1. create network 
+1. setup network 
+1. start clock
+1. create server
+1. setup server
+1. create client
+    ----------
+1. setup client
