@@ -19,6 +19,7 @@ func main() {
 	}
 	n := &network{
 		clk: clk,
+		rnd: rand.New(rand.NewSource(0)),
 	}
 	n.Setup()
 	go clk.Run()
@@ -379,20 +380,33 @@ func (o *obj) act(a clientInput) {
 }
 
 type network struct {
-	clk    *clock
-	client *client
-	server *server
+	clk        *clock
+	client     *client
+	server     *server
+	serverMsgs []NetworkWrapper[serverMsg]
+	clientMsgs []NetworkWrapper[clientMsg]
+	rnd        *rand.Rand
 }
 
 func (n *network) SendToClient(m serverMsg) {
-	n.client.Message(m)
+
+	n.serverMsgs = append(n.serverMsgs, NetworkWrapper[serverMsg]{
+		msg:     m,
+		counter: n.rnd.Intn(5),
+	})
 }
 
 func (n *network) SendToServer(m clientMsg) {
-	n.server.Message(m)
+	n.clientMsgs = append(n.clientMsgs, NetworkWrapper[clientMsg]{
+		msg:     m,
+		counter: n.rnd.Intn(5),
+	})
 }
 
 func (n *network) update(time.Time) {
+	// for i, cm := range n.clientMsgs {
+	// 	// if cm.
+	// }
 
 }
 
@@ -403,4 +417,14 @@ func (n network) String() string {
 func (n *network) Setup() error {
 	n.clk.subscribe(n)
 	return nil
+}
+
+type NetworkWrapper[T any] struct {
+	msg     T
+	counter int
+}
+
+func (n *NetworkWrapper[any]) Decrement() bool {
+	n.counter--
+	return n.counter < 1
 }
