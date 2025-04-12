@@ -17,13 +17,18 @@ func main() {
 	clk := &clock{
 		updatersLock: &sync.Mutex{},
 	}
+	n := &network{
+		clk: clk,
+	}
+	n.Setup()
 	go clk.Run()
 	s := &server{
 		clock:      clk,
 		cliMsgLock: &sync.Mutex{},
+		network:    n,
 	}
 
-	s.Setup()
+	s.Setup(n)
 
 	c := &client{
 		server:        s,
@@ -31,8 +36,9 @@ func main() {
 		serverMsgLock: &sync.Mutex{},
 		rnd:           rand.New(rand.NewSource(0)),
 		actions:       NewCircularArray[clientInput](20),
+		network:       n,
 	}
-	c.Setup()
+	c.Setup(n)
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
@@ -53,6 +59,7 @@ type client struct {
 	lastUpdate  time.Time
 	serverCycle int
 	rnd         *rand.Rand
+	network     *network
 	// userEvents
 }
 
@@ -148,7 +155,7 @@ func (c *client) sendUserEvents() {
 		inputs:      ip,
 		serverCycle: &c.serverCycle,
 	}
-	c.server.Message(m)
+	c.network.SendToServer(m)
 }
 func (c *client) handleUserEvents() {
 	if c.cliSimulation == nil {
@@ -176,8 +183,9 @@ func (c *client) handleMessages() {
 	}
 	c.serverMsgLock.Unlock()
 }
-func (c *client) Setup() error {
-	c.server.Message(clientMsg{
+func (c *client) Setup(n *network) error {
+	n.client = c
+	c.network.SendToServer(clientMsg{
 		connect: true,
 		client:  c,
 	})
@@ -211,14 +219,14 @@ func (c clientInput) String() string {
 type server struct {
 	cliMsgLock      *sync.Mutex
 	cliMsg          []clientMsg
-	clients         []*client
+	client          *client
 	clock           *clock
 	clientState     *obj
 	scLastInput     int
 	newClientInputs []clientInput
-
-	serverCycle int
-	lastUpdate  time.Time
+	network         *network
+	serverCycle     int
+	lastUpdate      time.Time
 }
 
 func (s *server) update(t time.Time) {
@@ -238,7 +246,8 @@ func (s *server) String() string {
 	return fmt.Sprintf("server: servercycle: %d, obj %s", s.serverCycle, s.clientState)
 }
 
-func (s *server) Setup() error {
+func (s *server) Setup(n *network) error {
+	n.server = s
 	s.clock.subscribe(s)
 	return nil
 }
@@ -256,7 +265,7 @@ func (s *server) handleMessages() {
 	for _, m := range s.cliMsg {
 		switch {
 		case m.connect:
-			s.clients = append(s.clients, m.client)
+			s.client = m.client
 			s.clientState = &obj{
 				velocity: 0,
 				pos:      0,
@@ -283,15 +292,13 @@ func (s *server) handleMessages() {
 	s.cliMsgLock.Unlock()
 }
 func (s *server) sendState() {
-	for i := range s.clients {
-		if s.clients[i] == nil {
-			continue
-		}
-		o := *s.clientState
-		s.clients[i].Message(serverMsg{
-			state: &o,
-		})
+	if s.client == nil {
+		return
 	}
+	o := *s.clientState
+	s.network.SendToClient(serverMsg{
+		state: &o,
+	})
 }
 func (s *server) updateObjects() {
 	if s.clientState == nil {
@@ -369,4 +376,31 @@ func (o *obj) act(a clientInput) {
 		return
 	}
 	o.velocity = *a.velocity
+}
+
+type network struct {
+	clk    *clock
+	client *client
+	server *server
+}
+
+func (n *network) SendToClient(m serverMsg) {
+	n.client.Message(m)
+}
+
+func (n *network) SendToServer(m clientMsg) {
+	n.server.Message(m)
+}
+
+func (n *network) update(time.Time) {
+
+}
+
+func (n network) String() string {
+	return fmt.Sprintf("network: ")
+}
+
+func (n *network) Setup() error {
+	n.clk.subscribe(n)
+	return nil
 }
