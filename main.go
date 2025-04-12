@@ -29,12 +29,22 @@ func main() {
 	s.Setup(n)
 
 	c := &client{
+		id:            1,
 		clock:         clk,
 		serverMsgLock: &sync.Mutex{},
 		rnd:           rand.New(rand.NewSource(0)),
 		actions:       NewCircularArray[clientInput](20),
 	}
 	c.Setup(n)
+
+	c2 := &client{
+		id:            1,
+		clock:         clk,
+		serverMsgLock: &sync.Mutex{},
+		rnd:           rand.New(rand.NewSource(0)),
+		actions:       NewCircularArray[clientInput](20),
+	}
+	c2.Setup(n)
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
