@@ -23,7 +23,8 @@ func main() {
 	n.Setup()
 	go clk.Run()
 	s := &server{
-		clock: clk,
+		clock:      clk,
+		worldState: &worldState{},
 	}
 
 	s.Setup(n)
@@ -254,6 +255,7 @@ type server struct {
 	clock      *clock
 	cycle      int
 	lastUpdate time.Time
+	worldState *worldState
 	sc         []*serverClient
 }
 
@@ -287,12 +289,24 @@ func (s *server) update(t time.Time) {
 		c.handleUserEvents(s.cycle)
 	}
 	// update world state
+	s.worldState.update(s.cycle)
 	for _, c := range s.sc {
 		c.updateObjects(s.cycle)
 	}
 	// send back the state
 	for _, c := range s.sc {
 		c.sendState(s.cycle)
+	}
+}
+
+type worldState struct {
+	players []obj
+}
+
+func (w *worldState) update(cycle int) {
+	// update world state
+	for _, c := range w.players {
+		c.update(cycle)
 	}
 }
 
