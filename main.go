@@ -19,17 +19,16 @@ func main() {
 	}
 	n := &network{
 		clk: clk,
-		rnd: rand.New(rand.NewSource(0)),
 	}
+	con := n.NewConnection()
 	n.Setup()
 	go clk.Run()
 	s := &server{
 		clock:      clk,
 		cliMsgLock: &sync.Mutex{},
-		network:    n,
 	}
 
-	s.Setup(n)
+	s.Setup(con)
 
 	c := &client{
 		server:        s,
@@ -37,9 +36,8 @@ func main() {
 		serverMsgLock: &sync.Mutex{},
 		rnd:           rand.New(rand.NewSource(0)),
 		actions:       NewCircularArray[clientInput](20),
-		network:       n,
 	}
-	c.Setup(n)
+	c.Setup(con)
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
@@ -60,7 +58,7 @@ type client struct {
 	lastUpdate     time.Time
 	cycle          int
 	rnd            *rand.Rand
-	network        *network
+	network        *connection
 	ping           int
 	nextCorrection int
 	// userEvents
@@ -199,7 +197,8 @@ func (c *client) handleMessages() {
 	}
 	c.serverMsgLock.Unlock()
 }
-func (c *client) Setup(n *network) error {
+func (c *client) Setup(n *connection) error {
+	c.network = n
 	n.client = c
 	c.network.SendToServer(clientMsg{
 		connect: true,
@@ -252,7 +251,7 @@ type server struct {
 	clientState       *obj
 	scLastInput       int
 	newClientInputs   []clientInput
-	network           *network
+	network           *connection
 	cycle             int
 	lastUpdate        time.Time
 	lastClientMessage *int
@@ -275,7 +274,8 @@ func (s *server) String() string {
 	return fmt.Sprintf("server: cycle: %d, obj %s", s.cycle, s.clientState)
 }
 
-func (s *server) Setup(n *network) error {
+func (s *server) Setup(n *connection) error {
+	s.network = n
 	s.cycle = 1000
 	n.server = s
 	s.clock.subscribe(s)
