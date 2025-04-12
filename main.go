@@ -244,22 +244,29 @@ type server struct {
 	clock      *clock
 	cycle      int
 	lastUpdate time.Time
-	*serverClient
+	sc         []*serverClient
 }
 
+func (s *server) client(c *client) *serverClient {
+	for _, cl := range s.sc {
+		if cl.con.client.id == c.id {
+			return cl
+		}
+	}
+	return nil
+}
 func (s *server) NewConnection(cli *client) *connection {
 	con := newConnection(cli, s)
-	s.serverClient = &serverClient{
+	s.sc = append(s.sc, &serverClient{
 		cliMsgLock: &sync.Mutex{},
 		con:        con,
-	}
+	})
 	return con
 }
 
 type serverClient struct {
 	cliMsgLock        *sync.Mutex
 	cliMsg            []clientMsg
-	client            *client
 	clientState       *obj
 	cycleLastInput    int
 	newClientInputs   []clientInput
@@ -274,10 +281,9 @@ func (s *server) update(t time.Time) {
 	// log.Println("server cycle", s.serverCycle)
 	s.lastUpdate = t
 	s.cycle++
-	if s.serverClient == nil {
-		return
+	for _, c := range s.sc {
+		c.update(s.cycle)
 	}
-	s.serverClient.update(s.cycle)
 }
 func (s *serverClient) update(cycle int) {
 	s.handleMessages(cycle)
@@ -287,7 +293,7 @@ func (s *serverClient) update(cycle int) {
 }
 
 func (s *server) String() string {
-	return fmt.Sprintf("server: cycle: %d, obj %s", s.cycle, s.clientState)
+	return fmt.Sprintf("server: cycle: %d, obj %v", s.cycle, s.sc)
 }
 
 func (s *server) Setup(n *network) error {
@@ -327,7 +333,7 @@ func (s *serverClient) handleMessages(cycle int) {
 		s.lastClientMessage = ptr(m.cycle)
 		switch {
 		case m.connect:
-			s.client = m.client
+			// s.con.client = m.client //TODO: does this make sense.
 			s.clientState = &obj{
 				velocity: 0.5,
 				pos:      0,
@@ -354,7 +360,7 @@ func (s *serverClient) handleMessages(cycle int) {
 	s.cliMsgLock.Unlock()
 }
 func (s *serverClient) sendState(cycle int) {
-	if s.client == nil {
+	if s.clientState == nil {
 		return
 	}
 	o := *s.clientState
@@ -375,6 +381,13 @@ func (s *serverClient) Message(c clientMsg) {
 	s.cliMsgLock.Lock()
 	s.cliMsg = append(s.cliMsg, c)
 	s.cliMsgLock.Unlock()
+}
+
+func (c serverClient) String() string {
+	if c.clientState == nil {
+		return "nil"
+	}
+	return fmt.Sprintf("serverClient(clientState: %v)", c.clientState)
 }
 
 type serverMsg struct {

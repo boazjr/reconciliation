@@ -85,7 +85,10 @@ func (c *connection) update() {
 		if cm.counter < 0 {
 			c.clientMsgs = append(c.clientMsgs[:i], c.clientMsgs[i+1:]...)
 			i--
-			c.server.Message(cm.msg)
+			cli := c.server.client(cm.msg.client)
+			if cli != nil {
+				cli.Message(cm.msg)
+			}
 			continue
 		}
 		c.clientMsgs[i] = cm
